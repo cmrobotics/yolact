@@ -15,6 +15,9 @@ echo $yoldact_docker
 export LIBGL_ALWAYS_INDIRECT=1
 nvidia-docker container run --rm -$mode \
   -e NVIDIA_DRIVER_CAPABILITIES=all \
+	--cap-add=SYS_PTRACE \
+	--security-opt=seccomp:unconfined \
+	--security-opt=apparmor:unconfined \
   --gpus all \
   --user $(id -u) \
   --workdir /home/ros \
