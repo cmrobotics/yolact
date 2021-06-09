@@ -63,6 +63,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-vcstool \
     python3-pip \
     ros-foxy-desktop=0.9.2-1* \
+    ros-foxy-test-msgs \
+    graphicsmagick-libmagick-dev-compat \
     wget \
     python3-tk \
     curl
