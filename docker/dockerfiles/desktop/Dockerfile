@@ -22,6 +22,6 @@ RUN sudo apt update \
 
 ENV HOME=/home/ros \
     SHELL=/bin/bash \
-    CUDA_HOME=/usr/local/local/cuda
+    CUDA_HOME=/usr/local/cuda
 
 ENTRYPOINT ["/usr/bin/lxpanel", "--profile", "LXDE"]
