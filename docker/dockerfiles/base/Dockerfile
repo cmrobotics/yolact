@@ -65,6 +65,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-foxy-desktop=0.9.2-1* \
     ros-foxy-test-msgs \
     graphicsmagick-libmagick-dev-compat \
+    libceres-dev \
+    ros-foxy-ompl \
+    libzmq3-dev \
+    libboost-dev \
+    jq \
+    ros-foxy-gazebo* \
     wget \
     python3-tk \
     curl
