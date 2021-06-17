@@ -18,15 +18,16 @@ nvidia-docker container run --rm -$mode \
 	--cap-add=SYS_PTRACE \
 	--security-opt=seccomp:unconfined \
 	--security-opt=apparmor:unconfined \
+  --privileged \
+  --volume=/dev:/dev \
   --gpus all \
   --user $(id -u) \
   --workdir /home/ros \
   --mount type=bind,source="${yoldact_docker}/home/ros",target=/home/ros \
-  --mount type=bind,source="${yoldact_docker}/usr/local/lib/python3.8/dist-packages",target=/usr/local/lib/python3.8/dist-packages \
+  --mount type=bind,source="${yoldact_docker}/usr/local",target=/usr/local \
   --name yolact-desktop-nvidia \
   --security-opt apparmor:unconfined \
   --net=host \
   --env="DISPLAY" \
   --volume="$HOME/.Xauthority:/home/ros/.Xauthority:rw" \
-  --entrypoint bash \
   yolact-desktop:v0.1

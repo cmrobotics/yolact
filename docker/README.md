@@ -15,14 +15,15 @@ The `./bin/set-me-up.sh` script will do the following:
 - Copy the built workspace to the destination folder of choice
 - Stop the container
 
-## Use computer workspace on docker
+## Use Docker as a development environment
 
 If you have your workspace locally and want to use the docker machine to run your code do:
 ```bash
-./bin/run-workspace.sh <ABSOLUTE_PATH_OF_FOLDER_PROVIDED_IN_SET_ME_UP>
+./bin/run-desktop.sh <ABSOLUTE_PATH_OF_FOLDER_PROVIDED_IN_SET_ME_UP>
 ```
 
-and then **inside the running container bash terminal** run:
+For instance:
 ```bash
-/usr/bin/lxpanel --profile LXDE
-````
+./bin/run-desktop.sh /home/ian/yolact-docker
+```
+Where `/home/ian/yolact-docker` is the folder you provided to `./bin/set-me-up.sh`
