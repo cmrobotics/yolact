@@ -63,6 +63,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-vcstool \
     python3-pip \
     ros-foxy-desktop=0.9.2-1* \
+    ros-foxy-test-msgs \
+    libgraphicsmagick++1-dev \
+    libzmq* \
+    ncurses* \
+    libfreeimage-dev \
+    libceres-dev \
+    ros-foxy-ompl \
     wget \
     python3-tk \
     curl
