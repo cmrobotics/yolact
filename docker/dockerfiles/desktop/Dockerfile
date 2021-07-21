@@ -11,7 +11,7 @@ RUN sudo apt update \
         software-properties-common curl apache2-utils \
         supervisor nginx sudo net-tools zenity xz-utils \
         dbus-x11 x11-utils alsa-utils curl ca-certificates gnupg patch \
-        mesa-utils libgl1-mesa-dri ffmpeg tmux \
+        mesa-utils libgl1-mesa-dri ffmpeg tmux libusb* \
         lxde gtk2-engines-murrine gnome-themes-standard gtk2-engines-pixbuf gtk2-engines-murrine arc-theme \
         xvfb x11vnc libcanberra-gtk-module libcanberra-gtk3-module meshlab psmisc \
         vim-tiny sudo firefox-geckodriver ttf-ubuntu-font-family ttf-wqy-zenhei \
@@ -21,6 +21,10 @@ RUN sudo apt update \
     && sudo ln -s /usr/bin/python3 /usr/bin/python
 
 ENV HOME=/home/ros \
-    SHELL=/bin/bash
+    SHELL=/bin/bash \
+    CUDA_HOME=/usr/local/cuda
+
+RUN sudo mkdir -p /home/ros/.config/lxterminal/
+COPY lxterminal.conf /home/ros/.config/lxterminal/lxterminal.conf
 
 ENTRYPOINT ["/usr/bin/lxpanel", "--profile", "LXDE"]

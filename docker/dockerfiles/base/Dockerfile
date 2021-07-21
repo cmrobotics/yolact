@@ -64,15 +64,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     ros-foxy-desktop=0.9.2-1* \
     ros-foxy-test-msgs \
-    libgraphicsmagick++1-dev \
-    libzmq* \
-    ncurses* \
-    libfreeimage-dev \
+    graphicsmagick-libmagick-dev-compat \
     libceres-dev \
     ros-foxy-ompl \
+    libzmq3-dev \
+    libboost-dev \
+    jq \
+    ros-foxy-gazebo* \
     wget \
     python3-tk \
-    curl
+    curl \
+    libssl-dev \
+    libusb-1.0-0-dev \
+    pkg-config  \
+    libgtk-3-dev \
+    freeglut3 \
+    freeglut3-dev \
+    libglfw3-dev \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev
+
 
 USER $USERNAME
 WORKDIR /home/$USERNAME
