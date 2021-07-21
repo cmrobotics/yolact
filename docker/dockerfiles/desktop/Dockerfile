@@ -24,7 +24,7 @@ ENV HOME=/home/ros \
     SHELL=/bin/bash \
     CUDA_HOME=/usr/local/cuda
 
-RUN sudo mkdir -p /home/ros/.config/lxterminal/
+RUN mkdir -p /home/ros/.config/lxterminal/
 COPY lxterminal.conf /home/ros/.config/lxterminal/lxterminal.conf
 
 ENTRYPOINT ["/usr/bin/lxpanel", "--profile", "LXDE"]

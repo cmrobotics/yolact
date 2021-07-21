@@ -7,6 +7,6 @@ echo "Write absolute path of the folder on your computer, you want the work file
 read destination_folder
 mkdir -p $destination_folder/home/ros
 mkdir -p $destination_folder/usr/local
-docker cp $container_id:/home/ros $destination_folder/home/ros
-docker cp $container_id:/usr/local $destination_folder/usr/local
+docker cp $container_id:/home/ros $destination_folder/home
+docker cp $container_id:/usr/local $destination_folder/usr
 docker stop -t 1 $container_id
