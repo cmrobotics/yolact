@@ -84,7 +84,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-dev \
     libglu1-mesa-dev
 
-
 USER $USERNAME
 WORKDIR /home/$USERNAME
 
