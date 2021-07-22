@@ -31,3 +31,4 @@ nvidia-docker container run --rm -$mode \
   --env="DISPLAY" \
   --volume="$HOME/.Xauthority:/home/ros/.Xauthority:rw" \
   yolact-desktop:v0.1
+
