@@ -31,6 +31,9 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import cv2
 
+import faiss
+
+
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
         return True
@@ -594,42 +597,56 @@ def badhash(x):
     x =  ((x >> 16) ^ x) & 0xFFFFFFFF
     return x
 
-def create_indices(embedding_sizes, number_of_trees=20):
-    indices = dict({})
+def create_indices(embedding_sizes, embedding_enabled, number_of_trees=20):
+    indices = []
     for layer_index, embedding_size in enumerate(embedding_sizes):
-        indices[layer_index] = AnnoyIndex(embedding_size, 'euclidean')
-        indices[layer_index].build(number_of_trees)
-        print(f"\tCreating index for layer {layer_index} with size {embedding_size}")
+        if embedding_enabled[layer_index]:
+            #indices[layer_index] = AnnoyIndex(embedding_size, 'euclidean')
+            quantizer = faiss.IndexFlatL2(embedding_size)
+            bytes_per_vector = 8
+            bits_per_byte = 8
+            index = faiss.IndexIVFPQ(quantizer, embedding_size, 100, bytes_per_vector, bits_per_byte)
+            indices.append(index)
+            #indices[layer_index].build(number_of_trees)
+    #       print(f"\tCreating index for layer {layer_index} with size {embedding_size}")
     return indices
 
 def save_indices(indices):
     for layer_index, index in indices.items():
         index.save(f'indices/embeddings_{layer_index}.ann')
 
-def add_embeddings(embeddings, indices, sample_index_offset, embedding_enabled):
+def get_embeddings_data(embeddings, indices, sample_index_offset, embedding_enabled):
+    flattened_embeddings_in_layer = []
     for layer_index, embedding in enumerate(embeddings):
         if embedding_enabled[layer_index]:
             embedding_size = embedding.size()[1] * embedding.size()[2] * embedding.size()[3]
-            index = indices[layer_index]
-            print(f"\tAdding embedding in layer {layer_index} with size {embedding_size}")
+#           index = indices[layer_index]
+#           print(f"\tAdding embedding in layer {layer_index} with size {embedding_size}")
+            flattened_embeddings_in_batch = []
             for batch_sample_index in range(embedding.size()[0]):
-                flattened_embedding = torch.flatten(embedding[batch_sample_index])
-                index.add_item(sample_index_offset + batch_sample_index , flattened_embedding)
+                flattened_embedding = torch.flatten(embedding[batch_sample_index]).unsqueeze(0)
+                flattened_embeddings_in_batch.append(flattened_embedding)
+            flattened_embeddings_in_batch = torch.cat(flattened_embeddings_in_batch, 0)
+            flattened_embeddings_in_layer.append(flattened_embeddings_in_batch)
+#               index.add_item(sample_index_offset + batch_sample_index , flattened_embedding)
+    return flattened_embeddings_in_layer
 
-def evalimage(indices, net:Yolact, path:str, sample_index_offset, embedding_enabled):
+def get_embeddings(indices, net:Yolact, path:str, sample_index_offset, embedding_enabled):
     frame = torch.from_numpy(cv2.imread(path)).cuda().float()
     batch = FastBaseTransform()(frame.unsqueeze(0))
     preds, embeddings = net(batch)
-    add_embeddings(embeddings, indices, sample_index_offset, embedding_enabled)
+    return get_embeddings_data(embeddings, indices, sample_index_offset, embedding_enabled)
 
 def evalimages(net:Yolact, input_folder:str, output_folder:str):
     print('**** START ****')
     if not os.path.exists(output_folder):
         os.mkdir(output_folder)
     embedding_sizes = [ 1218816, 313600, 82944, 20736, 6400 ]
-    embedding_enabled = [ False, False, False, False, True ]
-    indices = create_indices(embedding_sizes)
+    embedding_enabled = [ False, False, False, True, True ]
+    indices = create_indices(embedding_sizes, embedding_enabled)
     sample_index_offset = 0
+    embeddings_batch = None
+    trained = False
     with open('indices/images.txt', 'w') as images_file:
         for p in Path(input_folder).glob('*'):
             path = str(p)
@@ -638,7 +655,21 @@ def evalimages(net:Yolact, input_folder:str, output_folder:str):
             images_file.write(f"{name}\n")
             name = '.'.join(name.split('.')[:-1]) + '.png'
             out_path = os.path.join(output_folder, name)
-            evalimage(indices, net, path, sample_index_offset, embedding_enabled)
+            embeddings = get_embeddings(indices, net, path, sample_index_offset, embedding_enabled)
+            if embeddings_batch is not None:
+                embeddings_batch = [torch.cat([embedding_batch, embeddings[layer_index]], 0) \
+                    for layer_index, embedding_batch in enumerate(embeddings_batch)]
+            else:
+                embeddings_batch = embeddings
+            if sample_index_offset > 0 and sample_index_offset % 5000 == 0:
+                for layer_index, embeddings_batch_in_layer in enumerate(embeddings_batch):
+                    embeddings_batch_in_layer = embeddings_batch_in_layer.cpu().numpy()
+                    index = indices[layer_index]
+                    if not trained:
+                        index.train(embeddings_batch_in_layer)
+                    index.add(embeddings_batch_in_layer)
+                embeddings_batch = None
+                trained = True
             sample_index_offset = sample_index_offset + 1
     print('****  END  ****')
     save_indices(indices)
