@@ -132,10 +132,6 @@ def parse_args(argv=None):
     if args.seed is not None:
         random.seed(args.seed)
 
-iou_thresholds = [x / 100 for x in range(50, 100, 5)]
-coco_cats = {} # Call prep_coco_cats to fill this
-coco_cats_inv = {}
-color_cache = defaultdict(lambda: {})
 
 def create_indices(embedding_sizes, embedding_enabled, number_of_trees=20):
     indices = []
@@ -144,7 +140,9 @@ def create_indices(embedding_sizes, embedding_enabled, number_of_trees=20):
             quantizer = faiss.IndexFlatL2(embedding_size)
             bytes_per_vector = 8
             bits_per_byte = 8
-            index = faiss.IndexIVFPQ(quantizer, embedding_size, 100, bytes_per_vector, bits_per_byte)
+            nlist = 20
+            index = faiss.IndexIVFPQ(quantizer, embedding_size, nlist, bytes_per_vector, bits_per_byte)
+            index.cp.min_points_per_centroid = 10 # quiet warning
             indices.append(index)
     return indices
 
