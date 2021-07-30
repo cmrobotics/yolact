@@ -7,6 +7,8 @@ from utils import timer
 from utils.functions import SavePath
 from layers.output_utils import postprocess, undo_image_transformation
 import pycocotools
+from annoy import AnnoyIndex
+import random
 
 from data import cfg, set_cfg, set_dataset
 
@@ -592,39 +594,54 @@ def badhash(x):
     x =  ((x >> 16) ^ x) & 0xFFFFFFFF
     return x
 
-def evalimage(net:Yolact, path:str, save_path:str=None):
+def create_indices(embedding_sizes, number_of_trees=20):
+    indices = dict({})
+    for layer_index, embedding_size in enumerate(embedding_sizes):
+        indices[layer_index] = AnnoyIndex(embedding_size, 'euclidean')
+        indices[layer_index].build(number_of_trees)
+        print(f"\tCreating index for layer {layer_index} with size {embedding_size}")
+    return indices
+
+def save_indices(indices):
+    for layer_index, index in indices.items():
+        index.save(f'indices/embeddings_{layer_index}.ann')
+
+def add_embeddings(embeddings, indices, sample_index_offset, embedding_enabled):
+    for layer_index, embedding in enumerate(embeddings):
+        if embedding_enabled[layer_index]:
+            embedding_size = embedding.size()[1] * embedding.size()[2] * embedding.size()[3]
+            index = indices[layer_index]
+            print(f"\tAdding embedding in layer {layer_index} with size {embedding_size}")
+            for batch_sample_index in range(embedding.size()[0]):
+                flattened_embedding = torch.flatten(embedding[batch_sample_index])
+                index.add_item(sample_index_offset + batch_sample_index , flattened_embedding)
+
+def evalimage(indices, net:Yolact, path:str, sample_index_offset, embedding_enabled):
     frame = torch.from_numpy(cv2.imread(path)).cuda().float()
     batch = FastBaseTransform()(frame.unsqueeze(0))
     preds, embeddings = net(batch)
-
-    # print(f"Embeddings size:{[embedding.size() for embedding in embeddings]}")
-
-    img_numpy = prep_display(preds, frame, None, None, undo_transform=False)
-
-    if save_path is None:
-        img_numpy = img_numpy[:, :, (2, 1, 0)]
-
-    if save_path is None:
-        plt.imshow(img_numpy)
-        plt.title(path)
-        plt.show()
-    else:
-        cv2.imwrite(save_path, img_numpy)
+    add_embeddings(embeddings, indices, sample_index_offset, embedding_enabled)
 
 def evalimages(net:Yolact, input_folder:str, output_folder:str):
+    print('**** START ****')
     if not os.path.exists(output_folder):
         os.mkdir(output_folder)
-
-    print()
-    for p in Path(input_folder).glob('*'):
-        path = str(p)
-        name = os.path.basename(path)
-        name = '.'.join(name.split('.')[:-1]) + '.png'
-        out_path = os.path.join(output_folder, name)
-
-        evalimage(net, path, out_path)
-        print(path + ' -> ' + out_path)
-    print('Done.')
+    embedding_sizes = [ 1218816, 313600, 82944, 20736, 6400 ]
+    embedding_enabled = [ False, False, False, False, True ]
+    indices = create_indices(embedding_sizes)
+    sample_index_offset = 0
+    with open('indices/images.txt', 'w') as images_file:
+        for p in Path(input_folder).glob('*'):
+            path = str(p)
+            name = os.path.basename(path)
+            print(f"Current file: {name}")
+            images_file.write(f"{name}\n")
+            name = '.'.join(name.split('.')[:-1]) + '.png'
+            out_path = os.path.join(output_folder, name)
+            evalimage(indices, net, path, sample_index_offset, embedding_enabled)
+            sample_index_offset = sample_index_offset + 1
+    print('****  END  ****')
+    save_indices(indices)
 
 from multiprocessing.pool import ThreadPool
 from queue import Queue
@@ -874,134 +891,11 @@ def evaluate(net:Yolact, dataset, train_mode=False):
     net.detect.use_cross_class_nms = args.cross_class_nms
     cfg.mask_proto_debug = args.mask_proto_debug
 
-    # TODO Currently we do not support Fast Mask Re-scroing in evalimage, evalimages, and evalvideo
-    if args.image is not None:
-        if ':' in args.image:
-            inp, out = args.image.split(':')
-            evalimage(net, inp, out)
-        else:
-            evalimage(net, args.image)
-        return
-    elif args.images is not None:
+    if args.images is not None:
         inp, out = args.images.split(':')
         evalimages(net, inp, out)
         return
-    elif args.video is not None:
-        if ':' in args.video:
-            inp, out = args.video.split(':')
-            evalvideo(net, inp, out)
-        else:
-            evalvideo(net, args.video)
-        return
 
-    frame_times = MovingAverage()
-    dataset_size = len(dataset) if args.max_images < 0 else min(args.max_images, len(dataset))
-    progress_bar = ProgressBar(30, dataset_size)
-
-    if not args.display and not args.benchmark:
-        # For each class and iou, stores tuples (score, isPositive)
-        # Index ap_data[type][iouIdx][classIdx]
-        ap_data = {
-            'box' : [[APDataObject() for _ in cfg.dataset.class_names] for _ in iou_thresholds],
-            'mask': [[APDataObject() for _ in cfg.dataset.class_names] for _ in iou_thresholds]
-        }
-        detections = Detections()
-    else:
-        timer.disable('Load Data')
-
-    dataset_indices = list(range(len(dataset)))
-
-    if args.shuffle:
-        random.shuffle(dataset_indices)
-    elif not args.no_sort:
-        # Do a deterministic shuffle based on the image ids
-        #
-        # I do this because on python 3.5 dictionary key order is *random*, while in 3.6 it's
-        # the order of insertion. That means on python 3.6, the images come in the order they are in
-        # in the annotations file. For some reason, the first images in the annotations file are
-        # the hardest. To combat this, I use a hard-coded hash function based on the image ids
-        # to shuffle the indices we use. That way, no matter what python version or how pycocotools
-        # handles the data, we get the same result every time.
-        hashed = [badhash(x) for x in dataset.ids]
-        dataset_indices.sort(key=lambda x: hashed[x])
-
-    dataset_indices = dataset_indices[:dataset_size]
-
-    try:
-        # Main eval loop
-        for it, image_idx in enumerate(dataset_indices):
-            timer.reset()
-
-            with timer.env('Load Data'):
-                img, gt, gt_masks, h, w, num_crowd = dataset.pull_item(image_idx)
-
-                # Test flag, do not upvote
-                if cfg.mask_proto_debug:
-                    with open('scripts/info.txt', 'w') as f:
-                        f.write(str(dataset.ids[image_idx]))
-                    np.save('scripts/gt.npy', gt_masks)
-
-                batch = Variable(img.unsqueeze(0))
-                if args.cuda:
-                    batch = batch.cuda()
-
-            with timer.env('Network Extra'):
-                print("EVALUATING")
-                preds = net(batch)
-            # Perform the meat of the operation here depending on our mode.
-            if args.display:
-                img_numpy = prep_display(preds, img, h, w)
-            elif args.benchmark:
-                prep_benchmark(preds, h, w)
-            else:
-                prep_metrics(ap_data, preds, img, gt, gt_masks, h, w, num_crowd, dataset.ids[image_idx], detections)
-
-            # First couple of images take longer because we're constructing the graph.
-            # Since that's technically initialization, don't include those in the FPS calculations.
-            if it > 1:
-                frame_times.add(timer.total_time())
-
-            if args.display:
-                if it > 1:
-                    print('Avg FPS: %.4f' % (1 / frame_times.get_avg()))
-                plt.imshow(img_numpy)
-                plt.title(str(dataset.ids[image_idx]))
-                plt.show()
-            elif not args.no_bar:
-                if it > 1: fps = 1 / frame_times.get_avg()
-                else: fps = 0
-                progress = (it+1) / dataset_size * 100
-                progress_bar.set_val(it+1)
-                print('\rProcessing Images  %s %6d / %6d (%5.2f%%)    %5.2f fps        '
-                    % (repr(progress_bar), it+1, dataset_size, progress, fps), end='')
-
-
-
-        if not args.display and not args.benchmark:
-            print()
-            if args.output_coco_json:
-                print('Dumping detections...')
-                if args.output_web_json:
-                    detections.dump_web()
-                else:
-                    detections.dump()
-            else:
-                if not train_mode:
-                    print('Saving data...')
-                    with open(args.ap_data_file, 'wb') as f:
-                        pickle.dump(ap_data, f)
-
-                return calc_map(ap_data)
-        elif args.benchmark:
-            print()
-            print()
-            print('Stats for the last frame:')
-            timer.print_stats()
-            avg_seconds = frame_times.get_avg()
-            print('Average: %5.2f fps, %5.2f ms' % (1 / frame_times.get_avg(), 1000*avg_seconds))
-
-    except KeyboardInterrupt:
-        print('Stopping...')
 
 
 def calc_map(ap_data):
