@@ -150,7 +150,7 @@ def create_indices(embedding_sizes, embedding_enabled, number_of_trees=20):
 
 def save_indices(indices):
     for layer_index, index in enumerate(indices):
-        index.save(f'indices/embeddings_{layer_index}.ann')
+        faiss.write_index(index, f'indices/embeddings_{layer_index}.faiss')
 
 def get_embeddings_data(embeddings, indices, sample_index_offset, embedding_enabled):
     flattened_embeddings_in_layer = []
@@ -171,7 +171,7 @@ def get_embeddings(indices, net:Yolact, path:str, sample_index_offset, embedding
     preds, embeddings = net(batch)
     return get_embeddings_data(embeddings, indices, sample_index_offset, embedding_enabled)
 
-def add_to_index(embeddings_batch, indices):
+def add_to_index(embeddings_batch, indices, trained):
     for layer_index, embeddings_batch_in_layer in enumerate(embeddings_batch):
         embeddings_batch_in_layer = embeddings_batch_in_layer.cpu().numpy()
         index = indices[layer_index]
@@ -204,12 +204,12 @@ def index_images(net:Yolact, input_folder:str, output_folder:str):
             else:
                 embeddings_batch = embeddings
             if sample_index_offset > 0 and sample_index_offset % 10000 == 0:
-                add_to_index(embeddings_batch, indices)
+                add_to_index(embeddings_batch, indices, trained)
                 embeddings_batch = None
                 trained = True
             sample_index_offset = sample_index_offset + 1
         if embeddings_batch is not None:
-            add_to_index(embeddings_batch, indices)
+            add_to_index(embeddings_batch, indices, trained)
     print('****  END  ****')
     save_indices(indices)
 
