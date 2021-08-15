@@ -27,7 +27,9 @@ from collections import defaultdict
 from pathlib import Path
 from collections import OrderedDict
 from PIL import Image
-
+import operator, functools
+from dataclasses import dataclass
+import re
 import matplotlib.pyplot as plt
 import cv2
 
@@ -137,6 +139,7 @@ def create_indices(embedding_sizes, embedding_enabled, number_of_trees=20):
     indices = []
     for layer_index, embedding_size in enumerate(embedding_sizes):
         if embedding_enabled[layer_index]:
+            print("---")
             quantizer = faiss.IndexFlatL2(embedding_size)
             bytes_per_vector = 8
             bits_per_byte = 8
@@ -147,21 +150,22 @@ def create_indices(embedding_sizes, embedding_enabled, number_of_trees=20):
             indices.append(index)
     return indices
 
-def get_indices_file_paths(indices):
+def get_indices_file_paths(num_layers):
     file_paths = []
-    for layer_index, index in enumerate(indices):
+    for layer_index, _ in enumerate(range(num_layers)):
         file_paths.append(f'indices/embeddings_{layer_index}.faiss')
     return file_paths
 
 def save_indices(indices):
-    file_paths = get_indices_file_paths(indices)
-    for path, index in enumerate(file_paths):
-        faiss.write_index(index, path)
+    file_paths = get_indices_file_paths(len(indices))
+    for layer_index, index in enumerate(indices):
+        faiss.write_index(index, file_paths[layer_index])
 
-def indices_created(indices):
-    file_paths = get_indices_file_paths(indices)
+def indices_created(num_layers):
+    file_paths = get_indices_file_paths(num_layers)
     for path in file_paths:
         if not os.path.exists(path):
+            print(path)
             return False
     return True
 
@@ -169,7 +173,6 @@ def get_embeddings_data(embeddings, indices, sample_index_offset, embedding_enab
     flattened_embeddings_in_layer = []
     for layer_index, embedding in enumerate(embeddings):
         if embedding_enabled[layer_index]:
-            embedding_size = embedding.size()[1] * embedding.size()[2] * embedding.size()[3]
             flattened_embeddings_in_batch = []
             for batch_sample_index in range(embedding.size()[0]):
                 flattened_embedding = torch.flatten(embedding[batch_sample_index]).unsqueeze(0)
@@ -192,8 +195,30 @@ def add_to_index(embeddings_batch, indices, trained):
             index.train(embeddings_batch_in_layer)
         index.add(embeddings_batch_in_layer)
 
-#def get_style_embeddings():
+
+@dataclass
+class ImageData:
+    x: float
+    y: float
+    rotation_z: float
+    rotation_w: float
+    side: str
+
+def get_image_data(image_file):
+    regular_expression = "IMAGE_(-?\d+)_(-?\d+)_(-?\d+)_(-?\d+)_-serena\-camera\-(right|left)\-color\-image_raw_frame_\d+.png"
+    result = re.search(regular_expression, image_file)
+    if result:
+        data = result.group(1).split()
+        return ImageData(float(result.group(1).split()[0]) / 1000.0,
+                         float(result.group(2).split()[0]) / 1000.0,
+                         float(result.group(3).split()[0]) / 1000.0,
+                         float(result.group(4).split()[0]) / 1000.0,
+                         result.group(5).split())
+    return None
+
+
 def create_content_embedding_indices(input_folder, output_folder, indices, embedding_enabled):
+    print('**** START EMBEDDING INDICES GENERATION ****')
     sample_index_offset = 0
     embeddings_batch = None
     trained = False
@@ -201,7 +226,8 @@ def create_content_embedding_indices(input_folder, output_folder, indices, embed
         for file_path in Path(input_folder).glob('*'):
             path = str(file_path)
             name = os.path.basename(path)
-            print(f"{sample_index_offset} - Current file: {name}")
+            image_data = get_image_data(name)
+            print(f"{sample_index_offset} - Processing: {image_data}")
             images_file.write(f"{name}\n")
             name = '.'.join(name.split('.')[:-1]) + '.png'
             out_path = os.path.join(output_folder, name)
@@ -211,7 +237,7 @@ def create_content_embedding_indices(input_folder, output_folder, indices, embed
                     for layer_index, embedding_batch in enumerate(embeddings_batch)]
             else:
                 embeddings_batch = embeddings
-            if sample_index_offset > 0 and sample_index_offset % 10000 == 0:
+            if sample_index_offset > 0 and sample_index_offset % 1000 == 0:
                 add_to_index(embeddings_batch, indices, trained)
                 embeddings_batch = None
                 trained = True
@@ -219,16 +245,45 @@ def create_content_embedding_indices(input_folder, output_folder, indices, embed
         if embeddings_batch is not None:
             add_to_index(embeddings_batch, indices, trained)
     save_indices(indices)
+    print('**** END EMBEDDING INDICES GENERATION ****')
+
+
+
+def get_flat_sizes(embedding_sizes):
+    embedding_flat_sizes = []
+    for embedding_size in embedding_sizes:
+        embedding_flat_sizes.append(functools.reduce(operator.mul, embedding_size, 1))
+    return embedding_flat_sizes
+
+#def load_indices(number_layers):
+#    for layer_index in range(number_layers):
+#        a.load(fn, prefault=False)
 
 def index_images(net:Yolact, input_folder:str, output_folder:str):
-    print('**** START ****')
+
     if not os.path.exists(output_folder):
         os.mkdir(output_folder)
-    embedding_flat_sizes = [ 1218816, 313600, 82944, 20736, 6400 ]
-    embedding_enabled = [ False, False, False, True, True ]
-    indices = create_indices(embedding_flat_sizes, embedding_enabled)
-    if not indices_created(indices):
+    embedding_sizes = [
+            [256, 69, 69],
+            [256, 35, 35],
+            [256, 18, 18],
+            [256, 9, 9],
+            [256, 5, 5]
+        ]
+    embedding_flat_sizes = get_flat_sizes(embedding_sizes)
+    embedding_enabled = [ False, False, True, True, True ]
+    number_layers = len([e for e in embedding_enabled if e])
+    if not indices_created(number_layers):
+        indices = create_indices(embedding_flat_sizes, embedding_enabled)
         create_content_embedding_indices(input_folder, output_folder, indices, embedding_enabled)
+
+    #indices = load_indices(number_layers)
+
+    #a.get_item_vector(i) returns the vector for item i that was previously added.
+    #a.get_distance(i, j) returns the distance between items i and j. NOTE: this used to return the squared distance, but has been changed as of Aug 2016.
+    #a.get_n_items() returns the number of items in the index.
+
+
     #embeddings = ...
     #style_extractor = StyleExtractor()
     #for layer_index, embedding in enumerate(embeddings):
