@@ -9,7 +9,7 @@ from layers.output_utils import postprocess, undo_image_transformation
 import pycocotools
 from annoy import AnnoyIndex
 import random
-
+from torch import nn
 from data import cfg, set_cfg, set_dataset
 
 import numpy as np
@@ -140,15 +140,30 @@ def create_indices(embedding_sizes, embedding_enabled, number_of_trees=20):
             quantizer = faiss.IndexFlatL2(embedding_size)
             bytes_per_vector = 8
             bits_per_byte = 8
-            nlist = 20
+            nlist = 100
             index = faiss.IndexIVFPQ(quantizer, embedding_size, nlist, bytes_per_vector, bits_per_byte)
-            index.cp.min_points_per_centroid = 10 # quiet warning
+            index.cp.min_points_per_centroid = 5   # quiet warning
+            index.quantizer_trains_alone = 2
             indices.append(index)
     return indices
 
-def save_indices(indices):
+def get_indices_file_paths(indices):
+    file_paths = []
     for layer_index, index in enumerate(indices):
-        faiss.write_index(index, f'indices/embeddings_{layer_index}.faiss')
+        file_paths.append(f'indices/embeddings_{layer_index}.faiss')
+    return file_paths
+
+def save_indices(indices):
+    file_paths = get_indices_file_paths(indices)
+    for path, index in enumerate(file_paths):
+        faiss.write_index(index, path)
+
+def indices_created(indices):
+    file_paths = get_indices_file_paths(indices)
+    for path in file_paths:
+        if not os.path.exists(path):
+            return False
+    return True
 
 def get_embeddings_data(embeddings, indices, sample_index_offset, embedding_enabled):
     flattened_embeddings_in_layer = []
@@ -177,19 +192,14 @@ def add_to_index(embeddings_batch, indices, trained):
             index.train(embeddings_batch_in_layer)
         index.add(embeddings_batch_in_layer)
 
-def index_images(net:Yolact, input_folder:str, output_folder:str):
-    print('**** START ****')
-    if not os.path.exists(output_folder):
-        os.mkdir(output_folder)
-    embedding_sizes = [ 1218816, 313600, 82944, 20736, 6400 ]
-    embedding_enabled = [ False, False, False, True, True ]
-    indices = create_indices(embedding_sizes, embedding_enabled)
+#def get_style_embeddings():
+def create_content_embedding_indices(input_folder, output_folder, indices, embedding_enabled):
     sample_index_offset = 0
     embeddings_batch = None
     trained = False
-    with open('indices/images.txt', 'w') as images_file:
-        for p in Path(input_folder).glob('*'):
-            path = str(p)
+    with open(f'{output_folder}/images.txt', 'w') as images_file:
+        for file_path in Path(input_folder).glob('*'):
+            path = str(file_path)
             name = os.path.basename(path)
             print(f"{sample_index_offset} - Current file: {name}")
             images_file.write(f"{name}\n")
@@ -208,8 +218,24 @@ def index_images(net:Yolact, input_folder:str, output_folder:str):
             sample_index_offset = sample_index_offset + 1
         if embeddings_batch is not None:
             add_to_index(embeddings_batch, indices, trained)
-    print('****  END  ****')
     save_indices(indices)
+
+def index_images(net:Yolact, input_folder:str, output_folder:str):
+    print('**** START ****')
+    if not os.path.exists(output_folder):
+        os.mkdir(output_folder)
+    embedding_flat_sizes = [ 1218816, 313600, 82944, 20736, 6400 ]
+    embedding_enabled = [ False, False, False, True, True ]
+    indices = create_indices(embedding_flat_sizes, embedding_enabled)
+    if not indices_created(indices):
+        create_content_embedding_indices(input_folder, output_folder, indices, embedding_enabled)
+    #embeddings = ...
+    #style_extractor = StyleExtractor()
+    #for layer_index, embedding in enumerate(embeddings):
+    #    means = style_extractor.mean(embeddings)
+    #    stds  = style_extractor.std(embeddings, means)
+
+    print('****  END  ****')
 
 from multiprocessing.pool import ThreadPool
 from queue import Queue
@@ -220,11 +246,45 @@ def evaluate(net:Yolact, dataset, train_mode=False):
     cfg.mask_proto_debug = args.mask_proto_debug
 
     if args.images is not None:
-        inp, out = args.images.split(':')
-        index_images(net, inp, out)
+        index_images(net, args.images, 'indices')
         return
 
 
+class StyleExtractor(nn.Module):
+
+    def __init__(self):
+        super(StyleExtractor, self).__init__()
+        self.model = models.resnet18(pretrained=True)
+        self.model.eval()
+
+    def mean(embeddings):
+        embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
+        return embeddings.mean(2).unsqueeze(2).expand_as(embeddings)
+
+    def standard_deviation(embeddings, mean):
+        embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
+        embeddings = embeddings - mean
+        return embeddings.std(2)
+
+    def style(embeddings, means, stds):
+        embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
+        embeddings = embeddings - means
+        embeddings = embeddings / ( stds + 0.01 )
+        style = torch.bmm(embeddings, embeddings.transpose(1, 2))
+        style = style / embeddings.size(2)
+        return style
+
+    def forward(self, x):
+        x = torch.cat([x,x,x], 1)
+        x = (x - 0.456) / 0.225
+        x = self.model.conv1(x)
+        x = self.model.bn1(x)
+        x = self.model.relu(x)
+        x = self.model.maxpool(x)
+
+        embeddings = self.model.layer1(x)
+        embeddings = self.model.layer2(embeddings)
+        return StyleExtractor.style(embeddings)
 
 if __name__ == '__main__':
     parse_args()
