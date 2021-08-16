@@ -7,7 +7,6 @@ from utils import timer
 from utils.functions import SavePath
 from layers.output_utils import postprocess, undo_image_transformation
 import pycocotools
-from annoy import AnnoyIndex
 import random
 from torch import nn
 from data import cfg, set_cfg, set_dataset
@@ -126,8 +125,7 @@ class NearestNeighbourIndex():
         embeddings_batch_in_layer = embeddings_batch_in_layer.view(embeddings_batch_in_layer.size()[0],
             embeddings_batch_in_layer.size()[1],
             -1)
-        print(means.size(), stds.size(), embeddings_batch_in_layer.size())
-        embeddings_batch_in_layer = (embeddings_batch_in_layer - means) / (stds + 0.0001)
+        embeddings_batch_in_layer = (embeddings_batch_in_layer - means) / (stds + 0.00001)
         embeddings_batch_in_layer = embeddings_batch_in_layer.view(embeddings_batch_in_layer.size()[0], -1)
         return embeddings_batch_in_layer
 
@@ -172,10 +170,10 @@ class NearestNeighbourIndex():
                     embeddings_batch = None
                 sample_index_offset = sample_index_offset + 1
             if embeddings_batch is not None:
-                self.add_to_index(embeddings_batch, indices, trained)
+                means, stds = self.add_to_index(embeddings_batch, indices, means, stds)
         self.save_indices(indices)
-        return means, stds
         print('**** END EMBEDDING INDICES GENERATION ****')
+        return means, stds
 
     def get_flat_sizes(self):
         embedding_flat_sizes = []
@@ -196,8 +194,8 @@ class NearestNeighbourIndex():
         if not self.indices_created():
             indices = self.create_indices(self.embedding_flat_sizes)
             means, stds = self.create_content_embedding_indices(input_folder, indices)
-            torch.save(means, f"{output}/means.torch")
-            torch.save(stds,  f"{output}/stds.torch")
+            torch.save(means, f"{self.output_folder}/means.torch")
+            torch.save(stds,  f"{self.output_folder}/stds.torch")
         indices = self.load_indices()
 
 class StyleExtractor(nn.Module):
@@ -207,19 +205,23 @@ class StyleExtractor(nn.Module):
 
     def mean(embeddings):
         embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
-        return embeddings.mean(2).unsqueeze(2).expand_as(embeddings)
+        means = embeddings.std(0)
+        means = means.unsqueeze(0)
+        return means
 
     def standard_deviation(embeddings, mean):
         embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
         embeddings = embeddings - mean
-        stds = embeddings.std(2)
-        stds = stds.unsqueeze(2)
+        embeddings = embeddings.permute(0, 2, 1).contiguous()
+        embeddings = embeddings.view(-1, embeddings.size()[2])
+        stds = embeddings.std(0)
+        stds = stds.unsqueeze(0).unsqueeze(2)
         return stds
 
     def style(embeddings, means, stds):
         embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
         embeddings = embeddings - means
-        embeddings = embeddings / ( stds + 0.01 )
+        embeddings = embeddings / ( stds + 0.0001 )
         style = torch.bmm(embeddings, embeddings.transpose(1, 2))
         style = style / embeddings.size(2)
         return style
