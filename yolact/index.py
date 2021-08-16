@@ -50,24 +50,12 @@ def parse_args(argv=None):
     parser.add_argument('--trained_model',
                         default='weights/ssd300_mAP_77.43_v2.pth', type=str,
                         help='Trained state_dict file path to open. If "interrupt", this will open the interrupt file.')
-    parser.add_argument('--top_k', default=5, type=int,
-                        help='Further restrict the number of predictions to parse')
     parser.add_argument('--cuda', default=True, type=str2bool,
                         help='Use cuda to evaulate model')
     parser.add_argument('--fast_nms', default=True, type=str2bool,
                         help='Whether to use a faster, but not entirely correct version of NMS.')
     parser.add_argument('--cross_class_nms', default=False, type=str2bool,
                         help='Whether compute NMS cross-class or per-class.')
-    parser.add_argument('--display_masks', default=True, type=str2bool,
-                        help='Whether or not to display masks over bounding boxes')
-    parser.add_argument('--display_bboxes', default=True, type=str2bool,
-                        help='Whether or not to display bboxes around masks')
-    parser.add_argument('--display_text', default=True, type=str2bool,
-                        help='Whether or not to display text (class [score])')
-    parser.add_argument('--display_scores', default=True, type=str2bool,
-                        help='Whether or not to display scores in addition to classes')
-    parser.add_argument('--display', dest='display', action='store_true',
-                        help='Display qualitative results instead of quantitative ones.')
     parser.add_argument('--shuffle', dest='shuffle', action='store_true',
                         help='Shuffles the images when displaying them. Doesn\'t have much of an effect when display is off though.')
     parser.add_argument('--ap_data_file', default='results/ap_data.pkl', type=str,
