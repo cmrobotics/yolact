@@ -57,6 +57,8 @@ def get_image_data(image_file):
 
 class NearestNeighbourIndex():
 
+    EPSILLON = 0.00001
+
     def __init__(self, output_folder,
             embedding_sizes=[
                 [256, 69, 69],
@@ -65,7 +67,7 @@ class NearestNeighbourIndex():
                 [256, 9, 9],
                 [256, 5, 5]
             ],
-            embedding_enabled=[ False, False, False, False, True ]):
+            embedding_enabled=[ False, False, True, True, True ]):
         self.output_folder = output_folder
         self.embedding_sizes = embedding_sizes
         self.embedding_enabled = embedding_enabled
@@ -76,7 +78,6 @@ class NearestNeighbourIndex():
         indices = []
         for layer_index, embedding_size in enumerate(self.embedding_flat_sizes):
             if self.embedding_enabled[layer_index]:
-                print('embedding_size', embedding_size, len(indices))
                 quantizer = faiss.IndexFlatL2(embedding_size)
                 bytes_per_vector = 8
                 bits_per_byte = 8
@@ -125,31 +126,35 @@ class NearestNeighbourIndex():
         embeddings_batch_in_layer = embeddings_batch_in_layer.view(embeddings_batch_in_layer.size()[0],
             embeddings_batch_in_layer.size()[1],
             -1)
-        embeddings_batch_in_layer = (embeddings_batch_in_layer - means) / (stds + 0.00001)
+        embeddings_batch_in_layer = (embeddings_batch_in_layer - means) / (stds + NearestNeighbourIndex.EPSILLON)
         embeddings_batch_in_layer = embeddings_batch_in_layer.view(embeddings_batch_in_layer.size()[0], -1)
         return embeddings_batch_in_layer
 
     def add_to_index(self, embeddings_batch, indices, means, stds):
+        embeddings_count = len(embeddings_batch)
         for layer_index, embeddings_batch_in_layer in enumerate(embeddings_batch):
             index = indices[layer_index]
-            if means is None or stds is None:
-                means = StyleExtractor.mean(embeddings_batch_in_layer)
-                stds  = StyleExtractor.standard_deviation(embeddings_batch_in_layer, means)
-                embeddings_batch_in_layer = self.normalize_embeddings(embeddings_batch_in_layer, means, stds)
+            if len(means) < embeddings_count or len(stds) < embeddings_count:
+                mean = StyleExtractor.mean(embeddings_batch_in_layer)
+                std  = StyleExtractor.standard_deviation(embeddings_batch_in_layer, mean)
+                embeddings_batch_in_layer = self.normalize_embeddings(embeddings_batch_in_layer, mean, std)
                 embeddings_batch_in_layer = embeddings_batch_in_layer.cpu().numpy()
                 index.train(embeddings_batch_in_layer)
                 index.add(embeddings_batch_in_layer)
+                means.append(mean)
+                stds.append(std)
             else:
-                embeddings_batch_in_layer = self.normalize_embeddings(embeddings_batch_in_layer, means, stds)
+                embeddings_batch_in_layer = self.normalize_embeddings(embeddings_batch_in_layer,
+                    means[layer_index], stds[layer_index])
                 embeddings_batch_in_layer = embeddings_batch_in_layer.cpu().numpy()
                 index.add(embeddings_batch_in_layer)
-            return means, stds
+        return means, stds
 
     def create_content_embedding_indices(self, input_folder, indices, batch_size=1000):
         print('**** START EMBEDDING INDICES GENERATION ****')
         sample_index_offset = 0
         embeddings_batch = None
-        means, stds = None, None
+        means, stds = [], []
         with open(f'{self.output_folder}/images.txt', 'w') as images_file:
             for file_path in Path(input_folder).glob('*'):
                 path = str(file_path)
@@ -188,6 +193,13 @@ class NearestNeighbourIndex():
             indices.append(faiss.read_index(file_path))
         return indices
 
+    def load_statistics(self):
+        indices = []
+        means = torch.load(f"{self.output_folder}/means.torch")
+        print([print(mean.size()) for mean in means], "means")
+        stds = torch.load(f"{self.output_folder}/stds.torch")
+        return (means, stds)
+
     def index_images(self, net:Yolact, input_folder:str):
         if not os.path.exists(self.output_folder):
             os.mkdir(self.output_folder)
@@ -221,7 +233,7 @@ class StyleExtractor(nn.Module):
     def style(embeddings, means, stds):
         embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
         embeddings = embeddings - means
-        embeddings = embeddings / ( stds + 0.0001 )
+        embeddings = embeddings / ( stds + NearestNeighbourIndex.EPSILLON )
         style = torch.bmm(embeddings, embeddings.transpose(1, 2))
         style = style / embeddings.size(2)
         return style

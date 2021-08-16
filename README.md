@@ -32,7 +32,7 @@ Some examples from our YOLACT base model (33.5 fps on a Titan Xp and 29.8 mAP on
 Example of index generation from images of `/home/ros/semantic-mapping/images/` and
 model from `/home/ros/semantic-mapping/src/yolact/weights/yolact_plus_resnet50_54_800000.pth`:
 ```
- python -m yolact.index --trained_model=/home/ros/semantic-mapping/src/yolact/weights/yolact_plus_resnet50_54_800000.pth --images=/home/ros/semantic-mapping/images/
+python -m yolact.index --trained_model=/home/ros/semantic-mapping/src/yolact/weights/yolact_plus_resnet50_54_800000.pth --images=/home/ros/semantic-mapping/images/
 ```
 
 # Installation
