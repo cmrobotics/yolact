@@ -66,17 +66,18 @@ class NearestNeighbourIndex():
                 [256, 9, 9],
                 [256, 5, 5]
             ],
-            embedding_enabled=[ False, False, True, True, True ]):
+            embedding_enabled=[ False, False, False, False, True ]):
         self.output_folder = output_folder
         self.embedding_sizes = embedding_sizes
-        self.embedding_flat_sizes = self.get_flat_sizes()
         self.embedding_enabled = embedding_enabled
+        self.embedding_flat_sizes = self.get_flat_sizes()
         self.number_layers = len([e for e in self.embedding_enabled if e])
 
     def create_indices(self, number_of_trees=20):
         indices = []
         for layer_index, embedding_size in enumerate(self.embedding_flat_sizes):
             if self.embedding_enabled[layer_index]:
+                print('embedding_size', embedding_size, len(indices))
                 quantizer = faiss.IndexFlatL2(embedding_size)
                 bytes_per_vector = 8
                 bits_per_byte = 8
@@ -86,6 +87,14 @@ class NearestNeighbourIndex():
                 index.quantizer_trains_alone = 2
                 indices.append(index)
         return indices
+
+    def create_pcas(self):
+        pcas = []
+        for layer_index, embedding_size in enumerate(self.embedding_flat_sizes):
+            if self.embedding_enabled[layer_index]:
+                pca = faiss.PCAMatrix (embedding_size, embedding_size // 4)
+                pcas.append(index)
+        return pcas
 
     def get_indices_file_paths(self):
         file_paths = []
@@ -105,37 +114,44 @@ class NearestNeighbourIndex():
                 return False
         return True
 
-    def get_embeddings_data(self, embeddings, indices, sample_index_offset):
-        flattened_embeddings_in_layer = []
-        for layer_index, embedding in enumerate(embeddings):
-            if self.embedding_enabled[layer_index]:
-                flattened_embeddings_in_batch = []
-                for batch_sample_index in range(embedding.size()[0]):
-                    flattened_embedding = torch.flatten(embedding[batch_sample_index]).unsqueeze(0)
-                    flattened_embeddings_in_batch.append(flattened_embedding)
-                flattened_embeddings_in_batch = torch.cat(flattened_embeddings_in_batch, 0)
-                flattened_embeddings_in_layer.append(flattened_embeddings_in_batch)
-        return flattened_embeddings_in_layer
-
     def get_embeddings(self, indices, net:Yolact, path:str, sample_index_offset):
         frame = torch.from_numpy(cv2.imread(path)).cuda().float()
         batch = FastBaseTransform()(frame.unsqueeze(0))
         preds, embeddings = net(batch)
-        return self.get_embeddings_data(embeddings, indices, sample_index_offset)
+        embeddings = [embedding for layer_index, embedding in enumerate(embeddings)
+            if self.embedding_enabled[layer_index]]
+        return embeddings
 
-    def add_to_index(self, embeddings_batch, indices, trained):
+    def normalize_embeddings(self, embeddings_batch_in_layer, means, stds):
+        embeddings_batch_in_layer = embeddings_batch_in_layer.view(embeddings_batch_in_layer.size()[0],
+            embeddings_batch_in_layer.size()[1],
+            -1)
+        print(means.size(), stds.size(), embeddings_batch_in_layer.size())
+        embeddings_batch_in_layer = (embeddings_batch_in_layer - means) / (stds + 0.0001)
+        embeddings_batch_in_layer = embeddings_batch_in_layer.view(embeddings_batch_in_layer.size()[0], -1)
+        return embeddings_batch_in_layer
+
+    def add_to_index(self, embeddings_batch, indices, means, stds):
         for layer_index, embeddings_batch_in_layer in enumerate(embeddings_batch):
-            embeddings_batch_in_layer = embeddings_batch_in_layer.cpu().numpy()
             index = indices[layer_index]
-            if not trained:
+            if means is None or stds is None:
+                means = StyleExtractor.mean(embeddings_batch_in_layer)
+                stds  = StyleExtractor.standard_deviation(embeddings_batch_in_layer, means)
+                embeddings_batch_in_layer = self.normalize_embeddings(embeddings_batch_in_layer, means, stds)
+                embeddings_batch_in_layer = embeddings_batch_in_layer.cpu().numpy()
                 index.train(embeddings_batch_in_layer)
-            index.add(embeddings_batch_in_layer)
+                index.add(embeddings_batch_in_layer)
+            else:
+                embeddings_batch_in_layer = self.normalize_embeddings(embeddings_batch_in_layer, means, stds)
+                embeddings_batch_in_layer = embeddings_batch_in_layer.cpu().numpy()
+                index.add(embeddings_batch_in_layer)
+            return means, stds
 
-    def create_content_embedding_indices(self, input_folder, indices):
+    def create_content_embedding_indices(self, input_folder, indices, batch_size=1000):
         print('**** START EMBEDDING INDICES GENERATION ****')
         sample_index_offset = 0
         embeddings_batch = None
-        trained = False
+        means, stds = None, None
         with open(f'{self.output_folder}/images.txt', 'w') as images_file:
             for file_path in Path(input_folder).glob('*'):
                 path = str(file_path)
@@ -151,19 +167,19 @@ class NearestNeighbourIndex():
                         for layer_index, embedding_batch in enumerate(embeddings_batch)]
                 else:
                     embeddings_batch = embeddings
-                if sample_index_offset > 0 and sample_index_offset % 1000 == 0:
-                    self.add_to_index(embeddings_batch, indices, trained)
+                if sample_index_offset > 0 and sample_index_offset % ( batch_size - 1 ) == 0:
+                    means, stds = self.add_to_index(embeddings_batch, indices, means, stds)
                     embeddings_batch = None
-                    trained = True
                 sample_index_offset = sample_index_offset + 1
             if embeddings_batch is not None:
                 self.add_to_index(embeddings_batch, indices, trained)
         self.save_indices(indices)
+        return means, stds
         print('**** END EMBEDDING INDICES GENERATION ****')
 
     def get_flat_sizes(self):
         embedding_flat_sizes = []
-        for embedding_size in self.embedding_sizes:
+        for layer_index, embedding_size in enumerate(self.embedding_sizes):
             embedding_flat_sizes.append(functools.reduce(operator.mul, embedding_size, 1))
         return embedding_flat_sizes
 
@@ -179,25 +195,15 @@ class NearestNeighbourIndex():
             os.mkdir(self.output_folder)
         if not self.indices_created():
             indices = self.create_indices(self.embedding_flat_sizes)
-            self.create_content_embedding_indices(input_folder, indices)
+            means, stds = self.create_content_embedding_indices(input_folder, indices)
+            torch.save(means, f"{output}/means.torch")
+            torch.save(stds,  f"{output}/stds.torch")
         indices = self.load_indices()
-
-        #a.get_item_vector(i) returns the vector for item i that was previously added.
-        #a.get_distance(i, j) returns the distance between items i and j. NOTE: this used to return the squared distance, but has been changed as of Aug 2016.
-        #a.get_n_items() returns the number of items in the index.
-
-        #embeddings = ...
-        #style_extractor = StyleExtractor()
-        #for layer_index, embedding in enumerate(embeddings):
-        #    means = style_extractor.mean(embeddings)
-        #    stds  = style_extractor.std(embeddings, means)
 
 class StyleExtractor(nn.Module):
 
     def __init__(self):
         super(StyleExtractor, self).__init__()
-        self.model = models.resnet18(pretrained=True)
-        self.model.eval()
 
     def mean(embeddings):
         embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
@@ -206,7 +212,9 @@ class StyleExtractor(nn.Module):
     def standard_deviation(embeddings, mean):
         embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
         embeddings = embeddings - mean
-        return embeddings.std(2)
+        stds = embeddings.std(2)
+        stds = stds.unsqueeze(2)
+        return stds
 
     def style(embeddings, means, stds):
         embeddings = embeddings.view(embeddings.size()[0], embeddings.size()[1], -1)
@@ -215,18 +223,6 @@ class StyleExtractor(nn.Module):
         style = torch.bmm(embeddings, embeddings.transpose(1, 2))
         style = style / embeddings.size(2)
         return style
-
-    def forward(self, x):
-        x = torch.cat([x,x,x], 1)
-        x = (x - 0.456) / 0.225
-        x = self.model.conv1(x)
-        x = self.model.bn1(x)
-        x = self.model.relu(x)
-        x = self.model.maxpool(x)
-
-        embeddings = self.model.layer1(x)
-        embeddings = self.model.layer2(embeddings)
-        return StyleExtractor.style(embeddings)
 
 
 from multiprocessing.pool import ThreadPool
