@@ -196,9 +196,15 @@ class NearestNeighbourIndex():
     def load_statistics(self):
         indices = []
         means = torch.load(f"{self.output_folder}/means.torch")
-        print([print(mean.size()) for mean in means], "means")
         stds = torch.load(f"{self.output_folder}/stds.torch")
         return (means, stds)
+
+    def load_image_files(self):
+        with open(f'{self.output_folder}/images.txt', 'r') as images_file:
+	        images = images_file.readlines()
+	        images = [get_image_data(image) for image in images]
+	        return images
+        return []
 
     def index_images(self, net:Yolact, input_folder:str):
         if not os.path.exists(self.output_folder):
