@@ -2,10 +2,10 @@
 ```
     ██╗   ██╗ ██████╗ ██╗      █████╗  ██████╗████████╗
     ╚██╗ ██╔╝██╔═══██╗██║     ██╔══██╗██╔════╝╚══██╔══╝
-     ╚████╔╝ ██║   ██║██║     ███████║██║        ██║   
-      ╚██╔╝  ██║   ██║██║     ██╔══██║██║        ██║   
-       ██║   ╚██████╔╝███████╗██║  ██║╚██████╗   ██║   
-       ╚═╝    ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝   ╚═╝ 
+     ╚████╔╝ ██║   ██║██║     ███████║██║        ██║
+      ╚██╔╝  ██║   ██║██║     ██╔══██║██║        ██║
+       ██║   ╚██████╔╝███████╗██║  ██║╚██████╗   ██║
+       ╚═╝    ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝   ╚═╝
 ```
 
 A simple, fully convolutional model for real-time instance segmentation. This is the code for our papers:
@@ -28,6 +28,13 @@ Some examples from our YOLACT base model (33.5 fps on a Titan Xp and 29.8 mAP on
 
 ![Example 2](data/yolact_example_2.png)
 
+# Index Generation
+Example of index generation from images of `/home/ros/semantic-mapping/images/` and
+model from `/home/ros/semantic-mapping/src/yolact/weights/yolact_plus_resnet50_54_800000.pth`:
+```
+python -m yolact.index --trained_model=/home/ros/semantic-mapping/src/yolact/weights/yolact_plus_resnet50_54_800000.pth --images=/home/ros/semantic-mapping/images/
+```
+
 # Installation
  - Clone this repository and enter it:
    ```Shell
@@ -44,7 +51,7 @@ Some examples from our YOLACT base model (33.5 fps on a Titan Xp and 29.8 mAP on
        ```Shell
        # Cython needs to be installed before pycocotools
        pip install cython
-       pip install opencv-python pillow pycocotools matplotlib 
+       pip install opencv-python pillow pycocotools matplotlib
        ```
  - If you'd like to train YOLACT, download the COCO dataset and the 2014/2017 annotations. Note that this script will take a while and dump 21gb of files into `./data/coco`.
    ```Shell
@@ -232,8 +239,8 @@ For YOLACT++, please cite
 ```
 @article{yolact-plus-tpami2020,
   author  = {Daniel Bolya and Chong Zhou and Fanyi Xiao and Yong Jae Lee},
-  journal = {IEEE Transactions on Pattern Analysis and Machine Intelligence}, 
-  title   = {YOLACT++: Better Real-time Instance Segmentation}, 
+  journal = {IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  title   = {YOLACT++: Better Real-time Instance Segmentation},
   year    = {2020},
 }
 ```
